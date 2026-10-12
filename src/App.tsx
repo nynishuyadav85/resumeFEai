@@ -29,21 +29,29 @@ function App() {
     setResult(null);
 
     try {
-      // const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const response = await fetch('https://resumeai-project-k94v.onrender.com/', {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+      const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resumeText, jobDescription }),
       });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Backend se error aaya');
+      // 🔥 YE CHECK ADD KARO: Agar response JSON nahi hai, toh HTML error page aa raha hai
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Backend server se sahi response nahi mila. Kya backend chal raha hai?");
       }
 
       const data = await response.json();
-      setResult(data.data.analysisResult); // Yahan se structured data aa raha hai
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Backend se error aaya');
+      }
+
+      setResult(data.data.analysisResult);
     } catch (err: any) {
+      console.error("Fetch Error:", err);
       setError(err.message || 'Kuch galat ho gaya. Dobara try karo.');
     } finally {
       setLoading(false);
