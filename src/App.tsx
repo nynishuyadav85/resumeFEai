@@ -1,5 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from 'react';
+import { extractTextFromPDF } from './utils/pdfParser';
+
+
 
 // TypeScript interface for AI Response
 interface AnalysisResult {
@@ -15,6 +18,63 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState('');
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
+
+
+  const handleFileChange = async (file: File) => {
+    if (file.type !== 'application/pdf') {
+      setError('Sirf PDF files allowed hain');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File size 5MB se kam honi chahiye');
+      return;
+    }
+
+    setPdfLoading(true);
+    setError('');
+
+    try {
+      console.log('📄 PDF parsing started:', file.name, 'Size:', file.size);
+
+      const extractedText = await extractTextFromPDF(file);
+
+      console.log('✅ Extracted text length:', extractedText.length);
+      console.log('📝 First 200 chars:', extractedText.substring(0, 200));
+
+      if (extractedText.length < 50) {
+        throw new Error('PDF se text extract nahi ho paya. Kya ye scanned image wali PDF hai?');
+      }
+
+      setResumeFile(file);
+      setResumeText(extractedText);
+      console.log('✅ PDF successfully processed!');
+    } catch (err: any) {
+      console.error('❌ PDF Error:', err);
+      setError(err.message || 'PDF processing mein error aaya');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragActive(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileChange(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragActive(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,18 +89,25 @@ function App() {
     setResult(null);
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      // 1. URL lo
+      const rawApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-      const response = await fetch(`${API_URL}/api/analyze`, {
+      // 2. 🔥 SAFETY CHECK: Agar end mein '/' hai toh hata do
+      const cleanApiUrl = rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl;
+
+      console.log("🚀 Fetching from:", `${cleanApiUrl}/api/analyze`);
+
+      // 3. Sahi URL pe request bhejo
+      const response = await fetch(`${cleanApiUrl}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resumeText, jobDescription }),
       });
 
-      // 🔥 YE CHECK ADD KARO: Agar response JSON nahi hai, toh HTML error page aa raha hai
+      // 4. HTML error check
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-        throw new Error("Backend server se sahi response nahi mila. Kya backend chal raha hai?");
+        throw new Error(`Backend se sahi response nahi mila. Status: ${response.status}. Check karo backend chal raha hai ya nahi.`);
       }
 
       const data = await response.json();
@@ -51,7 +118,7 @@ function App() {
 
       setResult(data.data.analysisResult);
     } catch (err: any) {
-      console.error("Fetch Error:", err);
+      console.error("❌ Fetch Error:", err);
       setError(err.message || 'Kuch galat ho gaya. Dobara try karo.');
     } finally {
       setLoading(false);
@@ -72,13 +139,77 @@ function App() {
           <div className="grid md:grid-cols-2 gap-6 mb-6">
             <div>
               <label className="block text-sm font-semibold text-blue-300 mb-2">📄 Resume Text</label>
-              <textarea
-                value={resumeText}
-                onChange={(e) => setResumeText(e.target.value)}
-                placeholder="Apna resume yahan paste karo..."
-                className="w-full h-64 px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-slate-200"
-                required
-              />
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-blue-300 mb-2">
+                  📄 Resume (PDF ya Text)
+                </label>
+
+                {/* PDF Upload Box with Drag & Drop */}
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-all cursor-pointer mb-3 ${isDragActive
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                    : 'border-gray-300 dark:border-slate-600 hover:border-blue-400 dark:hover:border-blue-500'
+                    }`}
+                  onClick={() => document.getElementById('pdf-upload')?.click()}
+                >
+                  <input
+                    id="pdf-upload"
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileChange(file);
+                    }}
+                  />
+
+                  {pdfLoading ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                      <p className="text-sm text-gray-600 dark:text-slate-300">PDF parse ho rahi hai...</p>
+                    </div>
+                  ) : resumeFile ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="text-4xl">✅</div>
+                      <p className="text-sm font-semibold text-green-600 dark:text-green-400">
+                        {resumeFile.name}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                        {(resumeFile.size / 1024).toFixed(1)} KB • Click to change
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="text-4xl">📁</div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                        Drag & drop PDF yahan
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                        ya click karke select karo (Max 5MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Text Area (Optional - agar user directly paste karna chahe) */}
+                <details className="group">
+                  <summary className="cursor-pointer text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium">
+                    ✍️ Ya manually text paste karo
+                  </summary>
+                  <textarea
+                    value={resumeText}
+                    onChange={(e) => {
+                      setResumeText(e.target.value);
+                      setResumeFile(null); // Agar text paste kiya toh file state clear karo
+                    }}
+                    placeholder="Apna resume yahan paste karo..."
+                    className="mt-3 w-full h-40 px-4 py-3 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-200 transition-colors"
+                  />
+                </details>
+              </div>
             </div>
             <div>
               <label className="block text-sm font-semibold text-blue-300 mb-2">💼 Job Description</label>
